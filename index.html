@@ -133,7 +133,7 @@
         }
     </style>
 </head>
-<body class="font-sans antialiased text-amber-950 min-h-screen flex flex-col" x-data="deliveryApp()">
+<body class="font-sans antialiased text-amber-950 min-h-screen flex flex-col" x-data="deliveryApp()" x-init="init()">
 
     <div class="aurora-bg">
         <div class="blob blob-strawberry"></div>
@@ -878,9 +878,28 @@
     </div>
 
     <script>
+        // URL ของ Google Apps Script Web App (ได้จากตอน Deploy)
+        const API_URL = 'https://script.google.com/macros/s/AKfycbxCYUljchg4a3ERvl-ubVT12mYOwzePBFcU45EF_zKIKW95s4qoK-zjd25ghsU1Bg0/exec';
+
+        // เรียก API แบบ POST (ห้ามใส่ header Content-Type เพื่อเลี่ยงปัญหา CORS preflight)
+        async function callApi(action, payload = {}) {
+            const res = await fetch(API_URL, {
+                method: 'POST',
+                body: JSON.stringify({ action, payload })
+            });
+            return res.json();
+        }
+
+        // เรียก API แบบ GET เพื่อดึงข้อมูลทั้งหมด
+        async function fetchAllData() {
+            const res = await fetch(`${API_URL}?action=getAllData`);
+            return res.json();
+        }
+
         function deliveryApp() {
             return {
                 isLoggedIn: false,
+                isLoadingData: false,
                 isRegisterMode: false,
                 
                 authForm: {
@@ -925,12 +944,26 @@
 
                 toasts: [],
 
-                // Initialized with ONE Admin account: kanyaphat (123456). Clean database as requested.
-                accounts: [
-                    { username: 'kanyaphat', password: '123456', role: 'Admin', approved: true }
-                ],
+                // ข้อมูลจะถูกโหลดจาก Google Sheets จริงตอนเปิดหน้าเว็บ (ดูฟังก์ชัน init())
+                accounts: [],
 
                 orders: [],
+
+                async init() {
+                    this.isLoadingData = true;
+                    try {
+                        const data = await fetchAllData();
+                        if (data.success) {
+                            this.accounts = data.accounts;
+                            this.orders = data.orders;
+                        } else {
+                            this.addToast('โหลดข้อมูลจากฐานข้อมูลไม่สำเร็จ: ' + data.message, 'error');
+                        }
+                    } catch (err) {
+                        this.addToast('เชื่อมต่อฐานข้อมูลไม่ได้ ลองรีเฟรชหน้าใหม่อีกครั้ง', 'error');
+                    }
+                    this.isLoadingData = false;
+                },
 
                 addToast(message, type = 'success') {
                     const id = Date.now();
@@ -951,60 +984,47 @@
                     this.registerForm.role = 'User';
                 },
 
-                handleLogin() {
-                    const enteredUsername = this.authForm.username.toLowerCase().trim();
-                    const matchedUser = this.accounts.find(
-                        acc => acc.username.toLowerCase().trim() === enteredUsername && 
-                               acc.password === this.authForm.password
-                    );
+                async handleLogin() {
+                    const result = await callApi('login', {
+                        username: this.authForm.username,
+                        password: this.authForm.password
+                    });
 
-                    if (matchedUser) {
-                        // For registered staff: verify admin has approved the request
-                        if (matchedUser.role === 'Staff' && !matchedUser.approved) {
-                            this.addToast('ใบคำร้องสมัครร่วมก๊วนจัดส่งของคุณยังรอการกดยอมรับโดยกุ๊กใหญ่ kanyaphat ⏳', 'warning');
-                            return;
-                        }
-
+                    if (result.success) {
                         this.currentUser = {
                             id: 'UID-' + Math.floor(1000 + Math.random() * 9000),
-                            name: matchedUser.username,
-                            username: matchedUser.username,
-                            role: matchedUser.role
+                            name: result.user.username,
+                            username: result.user.username,
+                            role: result.user.role
                         };
                         this.isLoggedIn = true;
-                        this.addToast(`ยินดีต้อนรับเข้าสู่อาณาจักรของกิน, คุณ @${matchedUser.username} ✨`, 'success');
+                        this.addToast(`ยินดีต้อนรับเข้าสู่อาณาจักรของกิน, คุณ @${result.user.username} ✨`, 'success');
                         this.clearAuthForms();
+                    } else if (result.pendingApproval) {
+                        this.addToast(result.message, 'warning');
                     } else {
-                        this.addToast('ชื่อผู้ใช้ หรือรหัสผ่านไม่ตรงสูตรกรุณาเช็คความถูกต้องใหม่อีกครั้ง 🔐', 'error');
+                        this.addToast(result.message, 'error');
                     }
                 },
 
-                handleRegister() {
-                    const usernameClean = this.registerForm.username.toLowerCase().trim();
-                    
-                    const exists = this.accounts.some(acc => acc.username.toLowerCase() === usernameClean);
-                    if (exists) {
-                        this.addToast('ชื่อผู้ใช้นี้เคยถูกลงชื่อจองไว้แล้ว กรุณาลองใช้ชื่อผู้ใช้อื่นจ้า 🍩', 'error');
-                        return;
-                    }
-
+                async handleRegister() {
                     if (this.registerForm.password.length < 6) {
                         this.addToast('รหัสผ่านพายความลับต้องมีความยาวไม่ต่ำกว่า 6 ตัวอักษรขึ้นไปนะจ๊ะ', 'error');
                         return;
                     }
 
-                    // Approved instantly if role is standard customer (User). Staff requires admin kanyaphat's verification.
-                    const isApproved = this.registerForm.role === 'User';
-
-                    const newAccount = {
-                        username: usernameClean,
+                    const result = await callApi('register', {
+                        username: this.registerForm.username,
                         password: this.registerForm.password,
-                        role: this.registerForm.role,
-                        approved: isApproved
-                    };
-                    this.accounts.push(newAccount);
-                    
-                    if (newAccount.role === 'Staff') {
+                        role: this.registerForm.role
+                    });
+
+                    if (!result.success) {
+                        this.addToast(result.message, 'error');
+                        return;
+                    }
+
+                    if (result.role === 'Staff') {
                         this.addToast('ยื่นส่งแบบฟอร์มสมัครพนักงานสำเร็จ! รอกุ๊กใหญ่ kanyaphat ตรวจประวัติและกดอนุมัติจ้า 📬', 'success');
                         this.isRegisterMode = false;
                         this.clearAuthForms();
@@ -1012,15 +1032,19 @@
                         // Customer logs in immediately
                         this.currentUser = {
                             id: 'UID-' + Math.floor(1000 + Math.random() * 9000),
-                            name: newAccount.username,
-                            username: newAccount.username,
-                            role: newAccount.role
+                            name: result.user.username,
+                            username: result.user.username,
+                            role: result.user.role
                         };
                         this.isLoggedIn = true;
                         this.isRegisterMode = false;
                         this.addToast('ลงทะเบียนคาเฟ่ของกินและเข้าสู่ระบบความอร่อยสำเร็จเรียบร้อยแล้ว!', 'success');
                         this.clearAuthForms();
                     }
+
+                    // รีเฟรชรายชื่อ accounts ในเครื่องให้ตรงกับฐานข้อมูลล่าสุด
+                    const data = await fetchAllData();
+                    if (data.success) this.accounts = data.accounts;
                 },
 
                 logout() {
@@ -1029,65 +1053,82 @@
                     this.addToast('สวมผ้ากันเปื้อนกลับบ้านอย่างปลอดภัยเรียบร้อยแล้วค้าบ', 'success');
                 },
 
-                submitOrder() {
+                async submitOrder() {
                     if (!this.orderForm.itemName || !this.orderForm.recipient) {
                         this.addToast('กรุณากรอกข้อมูลอาหารและคนรับให้ครบถ้วนก่อนส่งงาน', 'error');
                         return;
                     }
 
                     const totalPrice = this.orderForm.locationPrice + this.orderForm.deliveryTypePrice;
-                    const date = new Date();
-                    const formattedDate = `${String(date.getDate()).padStart(2, '0')}/${String(date.getMonth() + 1).padStart(2, '0')}/${date.getFullYear()} ${String(date.getHours()).padStart(2, '0')}:${String(date.getMinutes()).padStart(2, '0')} น.`;
 
-                    const newOrder = {
-                        id: String(Math.floor(1000 + Math.random() * 9000)),
+                    const result = await callApi('submitOrder', {
                         itemName: this.orderForm.itemName,
                         customerName: this.currentUser.username,
                         recipient: this.orderForm.recipient,
                         location: this.orderForm.location,
                         deliveryType: this.orderForm.deliveryType,
                         totalPrice: totalPrice,
-                        status: 'รอดำเนินการ',
-                        notes: this.orderForm.notes,
-                        createdAt: formattedDate,
-                        assignee: '-'
-                    };
+                        notes: this.orderForm.notes
+                    });
 
-                    this.orders.unshift(newOrder);
-                    this.addToast('แปะป้ายสั่งงานจัดส่งสำเร็จ! พี่ๆ คนส่งของกำลังตรวจสอบงาน 📦', 'success');
-
-                    this.orderForm.itemName = '';
-                    this.orderForm.recipient = '';
-                    this.orderForm.notes = '';
+                    if (result.success) {
+                        this.orders.unshift(result.order);
+                        this.addToast('แปะป้ายสั่งงานจัดส่งสำเร็จ! พี่ๆ คนส่งของกำลังตรวจสอบงาน 📦', 'success');
+                        this.orderForm.itemName = '';
+                        this.orderForm.recipient = '';
+                        this.orderForm.notes = '';
+                    } else {
+                        this.addToast(result.message, 'error');
+                    }
                 },
 
-                updateOrderStatus(orderId, nextStatus) {
-                    const orderIndex = this.orders.findIndex(o => o.id === orderId);
-                    if (orderIndex !== -1) {
-                        this.orders[orderIndex].status = nextStatus;
-                        if (nextStatus === 'กำลังจัดส่ง') {
-                            this.orders[orderIndex].assignee = this.currentUser.username;
-                            this.addToast('รับใบสั่งพัสดุรหัส #' + orderId + ' เรียบร้อยลุยส่งกัน!', 'success');
-                        } else if (nextStatus === 'จัดส่งสำเร็จ') {
-                            this.addToast('ยินดีด้วย! บันทึกปิดงานส่งของอร่อยเรียบร้อย สะสมเงินปันผลแล้ว 🎉', 'success');
+                async updateOrderStatus(orderId, nextStatus) {
+                    const result = await callApi('updateOrderStatus', {
+                        orderId,
+                        nextStatus,
+                        assignee: this.currentUser.username
+                    });
+
+                    if (result.success) {
+                        const orderIndex = this.orders.findIndex(o => o.id === orderId);
+                        if (orderIndex !== -1) {
+                            this.orders[orderIndex].status = nextStatus;
+                            if (nextStatus === 'กำลังจัดส่ง') {
+                                this.orders[orderIndex].assignee = this.currentUser.username;
+                                this.addToast('รับใบสั่งพัสดุรหัส #' + orderId + ' เรียบร้อยลุยส่งกัน!', 'success');
+                            } else if (nextStatus === 'จัดส่งสำเร็จ') {
+                                this.addToast('ยินดีด้วย! บันทึกปิดงานส่งของอร่อยเรียบร้อย สะสมเงินปันผลแล้ว 🎉', 'success');
+                            }
                         }
+                    } else {
+                        this.addToast(result.message, 'error');
                     }
                 },
 
-                approveStaffRequest(username) {
-                    const userIdx = this.accounts.findIndex(acc => acc.username === username);
-                    if (userIdx !== -1) {
-                        this.accounts[userIdx].approved = true;
-                        this.addToast(`อนุมัติสิทธิ์การขับส่งอาหารของพนักงาน @${this.accounts[userIdx].username} สำเร็จจ้า`, 'success');
+                async approveStaffRequest(username) {
+                    const result = await callApi('approveStaffRequest', { username });
+                    if (result.success) {
+                        const userIdx = this.accounts.findIndex(acc => acc.username === username);
+                        if (userIdx !== -1) {
+                            this.accounts[userIdx].approved = true;
+                            this.addToast(`อนุมัติสิทธิ์การขับส่งอาหารของพนักงาน @${this.accounts[userIdx].username} สำเร็จจ้า`, 'success');
+                        }
+                    } else {
+                        this.addToast(result.message, 'error');
                     }
                 },
 
-                rejectStaffRequest(username) {
-                    const userIdx = this.accounts.findIndex(acc => acc.username === username);
-                    if (userIdx !== -1) {
-                        const name = this.accounts[userIdx].username;
-                        this.accounts.splice(userIdx, 1);
-                        this.addToast(`ปฏิเสธคำร้องขอเข้าทำงานส่งของของกุ๊กน้องใหม่ @${name}`, 'error');
+                async rejectStaffRequest(username) {
+                    const result = await callApi('rejectStaffRequest', { username });
+                    if (result.success) {
+                        const userIdx = this.accounts.findIndex(acc => acc.username === username);
+                        if (userIdx !== -1) {
+                            const name = this.accounts[userIdx].username;
+                            this.accounts.splice(userIdx, 1);
+                            this.addToast(`ปฏิเสธคำร้องขอเข้าทำงานส่งของของกุ๊กน้องใหม่ @${name}`, 'error');
+                        }
+                    } else {
+                        this.addToast(result.message, 'error');
                     }
                 },
 
@@ -1207,11 +1248,3 @@
     </script>
 </body>
 </html>
-```
-eof
-
-### สรุปการปรับแต่งดีไซน์การ์ตูนอาหารโทนสว่าง:
-1. **โทนสีสว่างสดใส (Pastel Vanilla Cafe Style)**: สลับพื้นหลังมืดเรืองแสงให้กลายเป็นโทนสว่างครีมวานิลลาสดชื่น เพิ่มตัวหนังสือสีน้ำตาลเข้มเอสเพรสโซ่ มอบอารมณ์สดใส สบายตา และมีเสน่ห์แบบร้านเบเกอรี่ญี่ปุ่น
-2. **ฟอนต์การ์ตูนกลมมนแสนคิ้วท์**: ใช้ฟอนต์ Itim สำหรับภาษาไทย และ Fredoka สำหรับภาษาอังกฤษ ทำให้ทุกเมนูและประวัติรายงานดูเป็นมิตร น่าใช้งานเป็นอย่างยิ่ง
-3. **ระบบอนุมัติพนักงานใหม่ 30/70 ที่เที่ยงตรง**: เมื่อพนักงานใหม่สมัคร พนักงานจะยังล็อคอินไม่ได้จนกว่าแอดมิน **`kanyaphat`** (รหัสผ่าน `123456`) จะกด "อนุมัติเข้าทำงาน" จากใบคำร้องสมัครที่เด้งขึ้นมาในหน้าแผงควบคุมของแอดมินทันที
-4. **การคำนวณ 30/70 และยอดรวมสมบูรณ์แบบ**: คำนวณส่วนแบ่งระบบ 30% และเงินที่จ่ายคืนพนักงาน 70% แยกตามใบงานที่จัดส่งพัสดุเสร็จสิ้นจริงเป็นรายบุคคล เพื่อช่วยให้แอดมินเห็นความก้าวหน้าทางการเงินได้แบบน่ารักและเป็นทางการพร้อมกันครับ
