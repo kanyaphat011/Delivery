@@ -1189,59 +1189,19 @@
                     return { revenue, total, pending, completed, adminShare, staffShare };
                 },
 
-                createSampleDataForTesting() {
-                    // Pre-load mock staff data to demonstrate dashboard behavior
-                    const dummyStaffs = ['mali_sweet', 'somporn_fast', 'kawai_delivery'];
-                    dummyStaffs.forEach((username) => {
-                        if (!this.accounts.some(a => a.username === username)) {
-                            this.accounts.push({
-                                username: username,
-                                password: 'password123',
-                                role: 'Staff',
-                                approved: true
-                            });
+                async createSampleDataForTesting() {
+                    const result = await callApi('createSampleData', {});
+                    if (result.success) {
+                        // โหลดข้อมูลจริงจาก Google Sheets กลับมาแสดง หลังบันทึกสำเร็จ
+                        const data = await fetchAllData();
+                        if (data.success) {
+                            this.accounts = data.accounts;
+                            this.orders = data.orders;
                         }
-                    });
-
-                    // Pre-load some pending requests that bounce on admin's panel (คำร้องสมัครเด้งสด)
-                    const pendingApplicants = ['peach_boba', 'chubby_cheeks'];
-                    pendingApplicants.forEach((username) => {
-                        if (!this.accounts.some(a => a.username === username)) {
-                            this.accounts.push({
-                                username: username,
-                                password: 'password123',
-                                role: 'Staff',
-                                approved: false
-                            });
-                        }
-                    });
-
-                    // Add dummy transaction records to populate logging details
-                    const dummyItems = [
-                        { itemName: 'มินิแพนเค้กราดครีมวนิลลาหนานุ่ม', recipient: 'วิศวกรรมคอมพิวเตอร์ ตึก 4', location: 'ตึกอาคาร', deliveryType: 'ด่วนพิเศษ', totalPrice: 15, status: 'จัดส่งสำเร็จ', assignee: 'mali_sweet' },
-                        { itemName: 'ชานมไข่มุกรสเผือกหวานเจี๊ยบ', recipient: 'กลุ่มเกษตร แปลง 2 คลองหญ้า', location: 'แปลงเกษตร', deliveryType: 'ธรรมดา', totalPrice: 5, status: 'จัดส่งสำเร็จ', assignee: 'somporn_fast' },
-                        { itemName: 'เค้กช็อกโกแลตสตรอว์เบอร์รีพาย', recipient: 'หอประชุมนวัตกรรมใหญ่ ชั้น 1', location: 'หอประชุม', deliveryType: 'ด่วนพิเศษ', totalPrice: 15, status: 'รอดำเนินการ', assignee: '-' },
-                        { itemName: 'ครัวซองต์เนยสดอบร้อนๆ สี่ชิ้น', recipient: 'อาคารวิจัยและวิทยบริการ ชั้น 2', location: 'ตึกอาคาร', deliveryType: 'ธรรมดา', totalPrice: 5, status: 'กำลังจัดส่ง', assignee: 'kawai_delivery' }
-                    ];
-
-                    dummyItems.forEach((item) => {
-                        const randomId = String(Math.floor(2000 + Math.random() * 8000));
-                        this.orders.push({
-                            id: randomId,
-                            itemName: item.itemName,
-                            customerName: 'yummy_customer',
-                            recipient: item.recipient,
-                            location: item.location,
-                            deliveryType: item.deliveryType,
-                            totalPrice: item.totalPrice,
-                            status: item.status,
-                            notes: 'ขอฝากขนมไว้ตรงจุดคัดกรองหรือชั้นวางของใต้ตึกได้เลยจ้า',
-                            createdAt: '14/07/2026 13:40 น.',
-                            assignee: item.assignee
-                        });
-                    });
-
-                    this.addToast('เสกข้อมูลตัวอย่างการสมัครงานและประวัติจัดส่งเข้าคลังเรียบร้อยค้าบ 🪄', 'success');
+                        this.addToast('เสกข้อมูลตัวอย่างการสมัครงานและประวัติจัดส่งลงฐานข้อมูลจริงเรียบร้อยค้าบ 🪄', 'success');
+                    } else {
+                        this.addToast(result.message, 'error');
+                    }
                 }
             }
         }
